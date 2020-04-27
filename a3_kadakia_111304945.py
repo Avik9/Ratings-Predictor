@@ -39,7 +39,7 @@ def readCSV(fileName):
 
         item_ids.append(int(line[0]))
         ratings.append(word_tokenize(str(line[1])))
-        reviews.append(word_tokenize(line[5]) if type(line[5]) == str else "")
+        reviews.append(word_tokenize(line[5].lower()) if type(line[5]) == str else "")
 
         # print("\nItem id:", line[0], type(line[0]), "Tokenized", item_id_tokenized)
         # print("Item rating:", line[1], type(line[1]), "Tokenized", rating_tokenized)
@@ -80,7 +80,7 @@ if __name__ == '__main__':
     print("You have", cores, "cores")
 
     w2v_model = Word2Vec(min_count=2,
-                     window=3,
+                     window=10,
                      size=128,
                      sample=6e-5, 
                      alpha=0.03, 
@@ -96,10 +96,10 @@ if __name__ == '__main__':
 
     t = time.time()
 
-    w2v_model.train(training_reviews, total_examples=w2v_model.corpus_count, epochs=30, report_delay=1)
+    w2v_model.train(training_reviews, total_examples=w2v_model.corpus_count, epochs=30, report_delay=0)
 
     print('Time to train the model: {} mins'.format((time.time() - t) / 60))
 
-
+    print(w2v_model.batch_words)
 
     print("Total time:", time.time() - now)
