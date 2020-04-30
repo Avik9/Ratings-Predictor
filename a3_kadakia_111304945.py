@@ -74,29 +74,19 @@ def trainWord2VecModel(reviews):
     return w2v_model
 
 def getFeatures(w2v_model, reviews):
-    ridge_train_x = np.array([])
+    ridge_train_x = []
 
     for review in reviews:
-        temp = np.array([])
+        temp = []
 
         for word in review:
-            vector = w2v_model.wv[word]
-            print(type(vector))
-            print(vector)
+            vector = w2v_model.wv[word]            
+            temp.append(vector)
 
-            # if len(temp) == 0:
-            #     temp = vector
-            # else:
-            temp = np.append(temp, np.array(vector), axis=0)
-        
-            print("Temp:", temp, "\n")
-            print("Temp average:", np.mean(temp, axis=0, dtype=np.float64), "\n")
-            print("Temp shape:", temp.shape, "\n")
-        print("Final Temp average:", np.mean(temp, axis=0, dtype=np.float64), "\n")
+        temp = np.asarray(temp)
+        ridge_train_x.append(np.mean(temp, axis=0, dtype=np.float64))
 
-        ridge_train_x = np.append(ridge_train_x, np.array([np.mean(temp, axis=0, dtype=np.float64)]))
-
-    return ridge_train_x
+    return np.asarray(ridge_train_x)
 
 ##################################################################
 ##################################################################
@@ -119,40 +109,41 @@ if __name__ == '__main__':
     else:
         training_file = sys.argv[1]
         trial_file = sys.argv[2]
-
-    # print("The following files will be opened:", sys.argv[1], sys.argv[2])
-
-    test_array = np.array([[1, 2], [2, 4], [3, 6]])
-    print("Axis 0:", np.mean(test_array, axis=0, dtype=np.float64))
   
     training_data = readCSV(training_file)
     # training_item_ids = training_data[0]
     # training_reviews = training_data[1]
     # training_ratings = training_data[2]
     
-    # trial_data = readCSV(trial_file)
+    trial_data = readCSV(trial_file)
     # trial_item_ids = trial_data[0]
     # trial_reviews = trial_data[1]
     # trial_ratings = trial_data[2]
 
     train_w2v_model = trainWord2VecModel(training_data[1])
+    test_w2v_model = trainWord2VecModel(trial_data[1])
 
     train_x = getFeatures(train_w2v_model, training_data[1])
-    train_y = np.array(training_data[2])
+    test_x = getFeatures(test_w2v_model, trial_data[1])
+    # print("Shape:", train_x.shape)
+    # print("Size:", len(train_x))
+    # print(train_x)
+    train_y = np.asarray(training_data[2])
+    test_y = np.asarray(trial_data[2])
+    # print("Size:", len(train_y))
 
+    rating_model = Ridge(random_state=42, alpha=1.0)
+    print("X:", type(train_x), "Size:", len(train_x), "Shape:", train_x.shape)
+    print("Y:", type(train_y), "Size:", len(train_y), "Shape:", train_y.shape)
+    rating_model.fit(train_x, train_y);
+    pred_y = rating_model.predict(test_x)
 
-    # print(w2v_model.wv['apple'])
+    # compute accuracy:
+    leny = len(test_y)
+    acc = np.sum([1 if (pred_y[i] == test_y[i])
+                    else 0 for i in range(leny)]) / leny
 
-    # word_vectors = w2v_model.wv.vectors
-    # print(type(word_vectors))
+    print("Accuracy for the Ridge model:", acc)
 
-    # print(len(training_ratings))
-    # print(len(word_vectors))
-    # print(word_vectors)
-    # print(len(w2v_model.wv.vocab.keys()))
-    # print(w2v_model.wv.vocab.keys())
-
-    # for ls in word_vectors:
-    #     print(ls, ":", word_vectors[ls])
 
     print("Total time:", time.time() - now)
