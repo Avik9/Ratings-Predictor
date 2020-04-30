@@ -38,7 +38,7 @@ def readCSV(fileName):
     for _, line in dataFile.iterrows():
 
         item_ids.append(int(line[0]))
-        ratings.append(word_tokenize(str(line[1])))
+        ratings.append(int(line[1]))
         reviews.append(word_tokenize(line[5].lower()) if type(line[5]) == str else "")
 
         # print("\nItem id:", line[0], type(line[0]), "Tokenized", item_id_tokenized)
@@ -83,8 +83,11 @@ def getFeatures(w2v_model, reviews):
             vector = w2v_model.wv[word]            
             temp.append(vector)
 
+        if(len(temp) != 128):
+            temp = [0]*128
+
         temp = np.asarray(temp)
-        ridge_train_x.append(np.mean(temp, axis=0, dtype=np.float64))
+        ridge_train_x.append(np.mean(temp, axis=0, dtype=np.float32))
 
     return np.asarray(ridge_train_x)
 
@@ -128,8 +131,8 @@ if __name__ == '__main__':
     # print("Shape:", train_x.shape)
     # print("Size:", len(train_x))
     # print(train_x)
-    train_y = np.asarray(training_data[2])
-    test_y = np.asarray(trial_data[2])
+    train_y = np.asarray(training_data[2], dtype=np.int)
+    test_y = np.asarray(trial_data[2], dtype=np.int)
     # print("Size:", len(train_y))
 
     rating_model = Ridge(random_state=42, alpha=1.0)
