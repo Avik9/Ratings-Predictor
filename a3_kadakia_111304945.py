@@ -10,6 +10,8 @@ import pandas as pd
 from nltk.tokenize import word_tokenize
 import multiprocessing
 
+##########################################################################################
+## Stage 1
 
 def readCSV(fileName):
     """
@@ -65,7 +67,8 @@ def trainWord2VecModel(reviews):
 
     Steps
     -----
-    Step 1.3: Use GenSim word2vec to train a 128-dimensional word2vec model utilizing only the training data.
+    Step 1.3: Use GenSim word2vec to train a 128-dimensional 
+              word2vec model utilizing only the training data.
     """
 
     cores = multiprocessing.cpu_count()
@@ -74,15 +77,13 @@ def trainWord2VecModel(reviews):
                          workers=cores-1,
                          window=10,
                          negative=0,
-                         sample=1e-5,
-                         min_count=3,
+                         min_count=5,
                          seed=42,
-                         iter=10,
                          size=128)
 
-    w2v_model.train(sentences=reviews, 
+    w2v_model.train(sentences=reviews,
                     total_examples=w2v_model.corpus_count,
-                    epochs=10)
+                    epochs=30)
 
     return w2v_model
 
@@ -101,11 +102,13 @@ def getFeatures(w2v_model, reviews):
     Returns
     -------
     train_x : Numpy Array
-        An array containing the averaged extracted features from the Word2Vec model.
+        An array containing the averaged extracted features 
+        from the Word2Vec model.
 
     Steps
     -----
-    Step 1.4: Extract features: utilizing your word2vec model, get a representation for each word per review.
+    Step 1.4: Extract features: utilizing your word2vec model,
+              get a representation for each word per review.
     """
 
     train_x = []
@@ -113,12 +116,16 @@ def getFeatures(w2v_model, reviews):
     for review in reviews:
         temp = [0] * 128
 
+        counter = 1
+
         for word in review:
             if word in w2v_model.wv.index2word:
                 temp += w2v_model.wv[word]
+                counter += 1
 
         temp = np.asarray(temp)
-        train_x.append(temp/len(review))
+        # train_x.append(temp/len(review))
+        train_x.append(temp/counter)
 
     return np.asarray(train_x)
 
@@ -145,7 +152,8 @@ def buildRatingPredictor(train_x, test_x, train_y, test_y):
 
     Steps
     -----
-    Step 1.5: Build a rating predictor using L2 *linear* regression (can use the SKLearn Ridge class) with word2vec features.
+    Step 1.5: Build a rating predictor using L2 *linear* regression
+              (can use the SKLearn Ridge class) with word2vec features.
     """
 
     listC = [0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000]
@@ -166,6 +174,9 @@ def buildRatingPredictor(train_x, test_x, train_y, test_y):
 
     return bestModel
 
+##########################################################################################
+## Stage 2
+
 ##################################################################
 ##################################################################
 # Main:
@@ -176,7 +187,8 @@ if __name__ == '__main__':
     print("Stage 1:\n")
 
     if(len(sys.argv) < 3 or len(sys.argv) > 3):
-        print("Please enter the right amount of arguments in the following manner:\npython3 a3_kadakia_111304945 '*_train.csv' '*_trial.csv'")
+        # print("Please enter the right amount of arguments in the following manner:",
+        #       "\npython3 a3_kadakia_111304945 '*_train.csv' '*_trial.csv'")
         # sys.exit(0)
         training_file = 'food_train.csv'
         trial_file = 'food_trial.csv'
@@ -188,7 +200,8 @@ if __name__ == '__main__':
     training_data = readCSV(training_file)
     trial_data = readCSV(trial_file)
 
-    # Stage 1.3: Use GenSim word2vec to train a 128-dimensional word2vec model utilizing only the training data
+    # Stage 1.3: Use GenSim word2vec to train a 128-dimensional word2vec
+    #            model utilizing only the training data
     train_w2v_model = trainWord2VecModel(training_data[1])
     test_w2v_model = trainWord2VecModel(trial_data[1])
 
@@ -201,16 +214,16 @@ if __name__ == '__main__':
     # Stage 1.5: Build a rating predictor
     rating_model = buildRatingPredictor(train_x, test_x, train_y, test_y)
     y_pred = rating_model.predict(test_x)
-    
-    # Stage 1.6: Print both the mean absolute error and Pearson correlation between the predictions and the (test input) set
-    print("\nAccuracy for the Ridge model test:", MAE(test_y, y_pred))
 
-    # print()
-    print("\nAccuracy for the Pearson test:", ss.pearsonr(test_y, y_pred))
-    print()
+    # Stage 1.6: Print both the mean absolute error and Pearson correlation
+    #            between the predictions and the (test input) set
+    print("MAE (test):", MAE(test_y, y_pred))
+    print("Pearson test:", ss.pearsonr(test_y, y_pred))
+
     print("\nStage 1 Checkpoint:\n")
     print("MAE (test):", MAE(test_y, y_pred))
-    print("Pearson product-moment correlation coefficients (test):", np.corrcoef(test_y, y_pred))
+    print("Pearson product-moment correlation coefficients (test):",
+          np.corrcoef(test_y, y_pred))
 
     if "food" in trial_file:
         testCases = [548, 4258, 4766, 5800]
@@ -223,5 +236,5 @@ if __name__ == '__main__':
                       y_pred[pos], "\tTrue Value:", trial_data[2][pos])
             else:
                 print(case, "not in", trial_file)
-    
-    print("Stage 2:\n")
+
+    print("\n\nStage 2:\n")
