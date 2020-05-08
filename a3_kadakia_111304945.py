@@ -53,7 +53,7 @@ def readCSV(fileName):
     return [item_ids, reviews, ratings]
 
 
-def trainWord2VecModel(reviews, user_reps=False):
+def trainWord2VecModel(reviews, min_count=1):
     """
     Trains a Word2Vec model from the given reviews.
 
@@ -74,11 +74,6 @@ def trainWord2VecModel(reviews, user_reps=False):
     """
 
     cores = multiprocessing.cpu_count()
-
-    if user_reps:
-        min_count = 1
-    else:
-        min_count = 5
 
     w2v_model = Word2Vec(sentences=reviews,
                          workers=cores-1,
@@ -277,8 +272,8 @@ if __name__ == '__main__':
         # print("Please enter the right amount of arguments in the following manner:",
         #       "\npython3 a3_kadakia_111304945 '*_train.csv' '*_trial.csv'")
         # sys.exit(0)
-        training_file = 'music_train.csv'
-        trial_file = 'music_trial.csv'
+        training_file = 'food_train.csv'
+        trial_file = 'food_trial.csv'
     else:
         training_file = sys.argv[1]
         trial_file = sys.argv[2]
@@ -291,8 +286,17 @@ if __name__ == '__main__':
 
     # Stage 1.3: Use GenSim word2vec to train a 128-dimensional word2vec
     #            model utilizing only the training data
-    train_w2v_model = trainWord2VecModel(training_data[1])
-    test_w2v_model = trainWord2VecModel(trial_data[1])
+    if "food_" in trial_file:
+        train_w2v_model = trainWord2VecModel(training_data[1], 5)
+        test_w2v_model = trainWord2VecModel(trial_data[1], 5)
+
+    if "music_" in trial_file:
+        train_w2v_model = trainWord2VecModel(training_data[1], 10)
+        test_w2v_model = trainWord2VecModel(trial_data[1], 10)
+
+    if "musicAndPetsup_" in trial_file:
+        train_w2v_model = trainWord2VecModel(training_data[1], 20)
+        test_w2v_model = trainWord2VecModel(trial_data[1], 20)
 
     # Stage 1.4: Extract features
     train_x = getFeatures(train_w2v_model, training_data[1])
@@ -310,19 +314,19 @@ if __name__ == '__main__':
     print("Mean Absolute Error (test):", MAE(test_y, y_pred))
     print("Pearson product-moment correlation coefficients (test):", ss.pearsonr(test_y, y_pred))
 
-    if "food" in trial_file:
+    
+    if "food_" in trial_file:
         testCases = [548, 4258, 4766, 5800]
-
         for case in testCases:
             if case in trial_data[0]:
                 pos = trial_data[0].index(case)
                 print()
                 print(case, "\tPredicted Value",
-                      y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+                        y_pred[pos], "\tTrue Value:", trial_data[2][pos])
             else:
                 print(case, "not in", trial_file)
 
-    if "music" in trial_file:
+    if "music_" in trial_file:
         testCases = [329, 11419, 14023, 14912]
 
         for case in testCases:
