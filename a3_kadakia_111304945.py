@@ -9,6 +9,7 @@ import sys
 import pandas as pd
 from nltk.tokenize import word_tokenize
 import multiprocessing
+import time
 
 ##########################################################################################
 # Stage 1
@@ -52,7 +53,7 @@ def readCSV(fileName):
     return [item_ids, reviews, ratings]
 
 
-def trainWord2VecModel(reviews, user_reps = False):
+def trainWord2VecModel(reviews, user_reps=False):
     """
     Trains a Word2Vec model from the given reviews.
 
@@ -80,11 +81,11 @@ def trainWord2VecModel(reviews, user_reps = False):
         min_count = 5
 
     w2v_model = Word2Vec(workers=cores-1,
-                        window=10,
-                        negative=0,
-                        min_count=min_count,
-                        seed=42,
-                        size=128)
+                         window=10,
+                         negative=0,
+                         min_count=min_count,
+                         seed=42,
+                         size=128)
 
     w2v_model.build_vocab(sentences=reviews)
 
@@ -225,34 +226,35 @@ def getUserBackground(files):
                 users[user] = [[], [], []]
                 temp_user = users[user]
 
-            temp_user[0].append(int(line[0])) # Item ids
-            temp_user[1].append(int(line[1])) # ratings
+            temp_user[0].append(int(line[0]))  # Item ids
+            temp_user[1].append(int(line[1]))  # ratings
             temp_user[2].append(word_tokenize(line[5].lower())
-                                if type(line[5]) == str else "") # Reviews
+                                if type(line[5]) == str else "")  # Reviews
 
     return users
 
 
-def getUserLangRepresentation(users):
+def getUserLangRepresentation(model, users):
     user_lang_rep = {}
-
-    print("Num users:", len(users))
-    counter = 0 
+    counter = 0
 
     for user in users:
-        user_lang_rep[user] = getFeatures(trainWord2VecModel(users[user][2], True), users[user][2])
+        temp_features = getFeatures(model, users[user][2])
+        temp_array = [0] * 128
+
+        for row in temp_features:
+            temp_array += row
+
+        user_lang_rep[user] = temp_array/len(temp_features)
         counter += 1
-        print("Users left:", len(users) - counter)
-    
+
     return user_lang_rep
 
 
 def runPCAMatrix(user_reps):
-    user_PCA = {}
 
-    for user in user_reps:
-        user_PCA[user] = PCA(n_components=3).fit(user_reps[user])
-        print("User:", user, "ratio:", user_PCA[user].explained_variance_ratio_)
+    user_PCA = PCA(n_components=3).fit(list(user_reps.values()))
+
 
     return user_PCA
 
@@ -276,46 +278,46 @@ if __name__ == '__main__':
         training_file = sys.argv[1]
         trial_file = sys.argv[2]
 
-    # # Stage 1.1: Read the reviews and ratings from the file
-    # training_data = readCSV(training_file)
-    # trial_data = readCSV(trial_file)
+    # Stage 1.1: Read the reviews and ratings from the file
+    training_data = readCSV(training_file)
+    trial_data = readCSV(trial_file)
 
-    # # Stage 1.3: Use GenSim word2vec to train a 128-dimensional word2vec
-    # #            model utilizing only the training data
-    # train_w2v_model = trainWord2VecModel(training_data[1])
-    # test_w2v_model = trainWord2VecModel(trial_data[1])
+    # Stage 1.3: Use GenSim word2vec to train a 128-dimensional word2vec
+    #            model utilizing only the training data
+    train_w2v_model = trainWord2VecModel(training_data[1])
+    test_w2v_model = trainWord2VecModel(trial_data[1])
 
-    # # Stage 1.4: Extract features
-    # train_x = getFeatures(train_w2v_model, training_data[1])
-    # test_x = getFeatures(test_w2v_model, trial_data[1])
-    # train_y = np.asarray(training_data[2], dtype=np.int)
-    # test_y = np.asarray(trial_data[2], dtype=np.int)
+    # Stage 1.4: Extract features
+    train_x = getFeatures(train_w2v_model, training_data[1])
+    test_x = getFeatures(test_w2v_model, trial_data[1])
+    train_y = np.asarray(training_data[2], dtype=np.int)
+    test_y = np.asarray(trial_data[2], dtype=np.int)
 
-    # # Stage 1.5: Build a rating predictor
-    # rating_model = buildRatingPredictor(train_x, test_x, train_y, test_y)
-    # y_pred = rating_model.predict(test_x)
+    # Stage 1.5: Build a rating predictor
+    rating_model = buildRatingPredictor(train_x, test_x, train_y, test_y)
+    y_pred = rating_model.predict(test_x)
 
-    # # Stage 1.6: Print both the mean absolute error and Pearson correlation
-    # #            between the predictions and the (test input) set
-    # print("MAE (test):", MAE(test_y, y_pred))
-    # print("Pearson test:", ss.pearsonr(test_y, y_pred))
+    # Stage 1.6: Print both the mean absolute error and Pearson correlation
+    #            between the predictions and the (test input) set
+    print("MAE (test):", MAE(test_y, y_pred))
+    print("Pearson test:", ss.pearsonr(test_y, y_pred))
 
-    # print("\nStage 1 Checkpoint:\n")
-    # print("MAE (test):", MAE(test_y, y_pred))
-    # print("Pearson product-moment correlation coefficients (test):",
-    #       np.corrcoef(test_y, y_pred))
+    print("\nStage 1 Checkpoint:\n")
+    print("MAE (test):", MAE(test_y, y_pred))
+    print("Pearson product-moment correlation coefficients (test):",
+          ss.pearsonr(test_y, y_pred))
 
-    # if "food" in trial_file:
-    #     testCases = [548, 4258, 4766, 5800]
+    if "food" in trial_file:
+        testCases = [548, 4258, 4766, 5800]
 
-    #     for case in testCases:
-    #         if case in trial_data[0]:
-    #             pos = trial_data[0].index(case)
-    #             print()
-    #             print(case, "\tPredicted Value",
-    #                   y_pred[pos], "\tTrue Value:", trial_data[2][pos])
-    #         else:
-    #             print(case, "not in", trial_file)
+        for case in testCases:
+            if case in trial_data[0]:
+                pos = trial_data[0].index(case)
+                print()
+                print(case, "\tPredicted Value",
+                      y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+            else:
+                print(case, "not in", trial_file)
 
     print("\n\nStage 2:\n")
 
@@ -324,8 +326,14 @@ if __name__ == '__main__':
 
     # Stage 2.2 For each user, treat their training data as "background" in order
     #           to learn user factors: average all of their word2vec features over
-    #           the training data to treat as 128-dimensional 
+    #           the training data to treat as 128-dimensional
     #           "user-language representations".
 
-    user_lang_rep = getUserLangRepresentation(users)
+    user_lang_rep = getUserLangRepresentation(train_w2v_model, users)
     user_PCA = runPCAMatrix(user_lang_rep)
+
+    # Stage 2.3: Run PCA the matrix of user-language representations to reduce down
+    #            to just three factors. Save the 3 dimensional transformation matrix
+    #            (V) so that you may apply it to new data (i.e. the trial or test set
+    #            when predicting -- when predicting you should not run PCA again;
+    #            only before training).
