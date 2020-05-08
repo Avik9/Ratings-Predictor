@@ -80,14 +80,16 @@ def trainWord2VecModel(reviews, user_reps=False):
     else:
         min_count = 5
 
-    w2v_model = Word2Vec(workers=cores-1,
+    w2v_model = Word2Vec(sentences=reviews,
+                         workers=cores-1,
                          window=10,
+                         alpha=0.03,
                          negative=0,
                          min_count=min_count,
                          seed=42,
                          size=128)
 
-    w2v_model.build_vocab(sentences=reviews)
+    # w2v_model.build_vocab(sentences=reviews)
 
     w2v_model.train(sentences=reviews,
                     total_examples=w2v_model.corpus_count,
@@ -132,8 +134,8 @@ def getFeatures(w2v_model, reviews):
                 counter += 1
 
         temp = np.asarray(temp)
-        # train_x.append(temp/len(review))
-        train_x.append(temp/counter)
+        train_x.append(temp/len(review))
+        # train_x.append(temp/counter)
 
     return np.asarray(train_x)
 
@@ -165,20 +167,23 @@ def buildRatingPredictor(train_x, test_x, train_y, test_y):
     """
 
     listC = [0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000]
-    maxAccuracy = -1
+    minAccuracy = 1
     bestModel = None
+    best_pearsonr = 0.35
 
     for C in listC:
 
         model = Ridge(random_state=42, alpha=C).fit(train_x, train_y)
-        pred_y_test = model.predict(test_x)
+        y_pred = model.predict(test_x)
 
-        acc = MAE(test_y, pred_y_test)
+        acc = MAE(test_y, y_pred)
+        pearsonr = ss.pearsonr(test_y, y_pred)
 
-        if acc >= maxAccuracy and acc < 1:
+        if acc < 1 and acc <= minAccuracy:
             # print("Current Best Model acc:", acc, "C:", C)
-            maxAccuracy = acc
+            minAccuracy = acc
             bestModel = model
+            best_pearsonr = pearsonr[0]
 
     return bestModel
 
@@ -254,9 +259,9 @@ def getUserLangRepresentation(model, users):
 def runPCAMatrix(user_reps):
 
     user_PCA = PCA(n_components=3).fit(list(user_reps.values()))
+    v_matrix = user_PCA.transform(list(user_reps.values()))
 
-
-    return user_PCA
+    return v_matrix
 
 
 ##################################################################
@@ -266,17 +271,19 @@ def runPCAMatrix(user_reps):
 
 if __name__ == '__main__':
 
-    print("Stage 1:\n")
+    # Stage 1
 
     if(len(sys.argv) < 3 or len(sys.argv) > 3):
         # print("Please enter the right amount of arguments in the following manner:",
         #       "\npython3 a3_kadakia_111304945 '*_train.csv' '*_trial.csv'")
         # sys.exit(0)
-        training_file = 'food_train.csv'
-        trial_file = 'food_trial.csv'
+        training_file = 'music_train.csv'
+        trial_file = 'music_trial.csv'
     else:
         training_file = sys.argv[1]
         trial_file = sys.argv[2]
+
+    print("\nStage 1 Checkpoint:\n")
 
     # Stage 1.1: Read the reviews and ratings from the file
     training_data = readCSV(training_file)
@@ -299,13 +306,9 @@ if __name__ == '__main__':
 
     # Stage 1.6: Print both the mean absolute error and Pearson correlation
     #            between the predictions and the (test input) set
-    print("MAE (test):", MAE(test_y, y_pred))
-    print("Pearson test:", ss.pearsonr(test_y, y_pred))
 
-    print("\nStage 1 Checkpoint:\n")
-    print("MAE (test):", MAE(test_y, y_pred))
-    print("Pearson product-moment correlation coefficients (test):",
-          ss.pearsonr(test_y, y_pred))
+    print("Mean Absolute Error (test):", MAE(test_y, y_pred))
+    print("Pearson product-moment correlation coefficients (test):", ss.pearsonr(test_y, y_pred))
 
     if "food" in trial_file:
         testCases = [548, 4258, 4766, 5800]
@@ -319,7 +322,19 @@ if __name__ == '__main__':
             else:
                 print(case, "not in", trial_file)
 
-    print("\n\nStage 2:\n")
+    if "music" in trial_file:
+        testCases = [329, 11419, 14023, 14912]
+
+        for case in testCases:
+            if case in trial_data[0]:
+                pos = trial_data[0].index(case)
+                print()
+                print(case, "\tPredicted Value",
+                      y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+            else:
+                print(case, "not in", trial_file)
+
+    print("\nStage 2 Checkpoint:\n")
 
     # Stage 2.1: Grab the user_ids for both datasets.
     users = getUserBackground([training_file, trial_file])
@@ -328,12 +343,46 @@ if __name__ == '__main__':
     #           to learn user factors: average all of their word2vec features over
     #           the training data to treat as 128-dimensional
     #           "user-language representations".
-
     user_lang_rep = getUserLangRepresentation(train_w2v_model, users)
-    user_PCA = runPCAMatrix(user_lang_rep)
 
     # Stage 2.3: Run PCA the matrix of user-language representations to reduce down
     #            to just three factors. Save the 3 dimensional transformation matrix
     #            (V) so that you may apply it to new data (i.e. the trial or test set
     #            when predicting -- when predicting you should not run PCA again;
     #            only before training).
+    v_matrix = runPCAMatrix(user_lang_rep)
+
+    # Stage 2.4: Use the first three factors from PCA as user factors in order to run
+    #            user-factor adaptation, otherwise using the same approach as stage 1.
+
+    # train x, test x, exact order of each user in test and train (mapping user ids
+    #  to factors in the v_matrix), map ids to user_embedding = training_data[0]
+    # do for train and test
+    #   for each row, get review embedding, get user factor for that row's user id,
+    #   multiply them (dot product) and append them in 1 array to have a (1, 384)
+    #   vector and store it to train the ridge model and then predict.
+
+
+    # if "food" in trial_file:
+    #     testCases = [548, 4258, 4766, 5800]
+
+    #     for case in testCases:
+    #         if case in trial_data[0]:
+    #             pos = trial_data[0].index(case)
+    #             print()
+    #             print(case, "\tPredicted Value",
+    #                   y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+    #         else:
+    #             print(case, "not in", trial_file)
+
+    # if "music" in trial_file:
+    #     testCases = [329, 11419, 14023, 14912]
+
+    #     for case in testCases:
+    #         if case in trial_data[0]:
+    #             pos = trial_data[0].index(case)
+    #             print()
+    #             print(case, "\tPredicted Value",
+    #                   y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+    #         else:
+    #             print(case, "not in", trial_file)
