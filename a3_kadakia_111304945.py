@@ -39,6 +39,7 @@ def readCSV(fileName):
     item_ids = []
     ratings = []
     reviews = []
+    user_ids = []
 
     dataFile["reviewText"] = dataFile["reviewText"].replace("", np.nan)
     dataFile = dataFile.dropna(subset=["reviewText"])
@@ -47,10 +48,11 @@ def readCSV(fileName):
 
         item_ids.append(int(line[0]))
         ratings.append(int(line[1]))
+        user_ids.append(line[4])
         reviews.append(word_tokenize(
             line[5].lower()) if type(line[5]) == str else "")
 
-    return [item_ids, reviews, ratings]
+    return [item_ids, reviews, ratings, user_ids]
 
 
 def trainWord2VecModel(reviews, min_count=1):
@@ -208,7 +210,7 @@ def getUserBackground(files):
     ratings = []
     reviews = []
     item_ids = []
-    users = {}
+    user_ids = []
 
     for file in files:
         dataFile = pd.read_csv(file, sep=',')
@@ -220,44 +222,89 @@ def getUserBackground(files):
 
             user = line[4]
 
-            if user in users:
-                temp_user = users[user]
+            if user in user_ids:
+                position = user_ids.index(user)
+
+                item_ids[position].append(int(line[0]))  # Item ids
+                ratings[position].append(int(line[1]))  # ratings
+                reviews[position].append(word_tokenize(line[5].lower())
+                                         if type(line[5]) == str else "")  # Reviews
+
             else:
-                users[user] = [[], [], []]
-                temp_user = users[user]
+                user_ids.append(user)
+                position = user_ids.index(user)
 
-            temp_user[0].append(int(line[0]))  # Item ids
-            temp_user[1].append(int(line[1]))  # ratings
-            temp_user[2].append(word_tokenize(line[5].lower())
-                                if type(line[5]) == str else "")  # Reviews
+                item_ids.append([int(line[0])])  # Item ids
+                ratings.append([int(line[1])])  # ratings
+                reviews.append([word_tokenize(line[5].lower())
+                                if type(line[5]) == str else ""])  # Reviews
 
-    return users
+    return [user_ids, item_ids, ratings, reviews]
 
 
 def getUserLangRepresentation(model, users):
-    user_lang_rep = {}
-    counter = 0
+    user_lang_rep = []
 
-    for user in users:
-        temp_features = getFeatures(model, users[user][2])
+    for reviews in users[3]:
+        temp_features = getFeatures(model, reviews)
         temp_array = [0] * 128
 
         for row in temp_features:
             temp_array += row
 
-        user_lang_rep[user] = temp_array/len(temp_features)
-        counter += 1
+        user_lang_rep.append(temp_array/len(temp_features))
 
     return user_lang_rep
 
 
-def runPCAMatrix(user_reps):
+def runPCAMatrix(user_reviews):
 
-    user_PCA = PCA(n_components=3).fit(list(user_reps.values()))
-    v_matrix = user_PCA.transform(list(user_reps.values()))
+    user_PCA = PCA(n_components=3).fit(user_reviews)
+    v_matrix = user_PCA.transform(user_reviews)
 
     return v_matrix
 
+        # Part 1  Part 1  ReadCSV               ReadCSV              2.1        CLI   2.3
+def test(X_train, X_test, review_training_data, review_testing_data, user_data, file, v_matrix):
+
+    feature_vector = []
+
+    dataFile = pd.read_csv(file, sep=',')
+
+    dataFile["reviewText"] = dataFile["reviewText"].replace("", np.nan)
+    dataFile = dataFile.dropna(subset=["reviewText"])
+
+    for _, line in dataFile.iterrows():
+
+        temp_feature_vector = []
+        item_id = line[0]
+        user_id = line[4]
+
+        if item_id in review_training_data[0]:
+            position = review_training_data[0].index(item_id)
+            review_embedding = X_train[position]
+
+        elif item_id in review_testing_data[0]:
+            position = review_testing_data[0].index(item_id)
+            review_embedding = X_test[position]
+
+        if user_id in user_data[0]:
+            position = user_data[0].index(user_id)
+            user_factor = v_matrix[position]
+
+        elif user_id in user_data[0]:
+            position = user_data[0].index(user_id)
+            user_factor = v_matrix[position]
+
+        for vector in user_factor:
+            temp_feature_vector.append(review_embedding * vector)
+        
+        temp_feature_vector.append(review_embedding)
+        flattened_array = np.ndarray.flatten(np.array(temp_feature_vector))
+        feature_vector.append(flattened_array)
+
+    feature_vector = np.array(feature_vector)
+    return feature_vector
 
 ##################################################################
 ##################################################################
@@ -312,9 +359,9 @@ if __name__ == '__main__':
     #            between the predictions and the (test input) set
 
     print("Mean Absolute Error (test):", MAE(test_y, y_pred))
-    print("Pearson product-moment correlation coefficients (test):", ss.pearsonr(test_y, y_pred))
+    print("Pearson product-moment correlation coefficients (test):",
+          ss.pearsonr(test_y, y_pred))
 
-    
     if "food_" in trial_file:
         testCases = [548, 4258, 4766, 5800]
         for case in testCases:
@@ -322,7 +369,7 @@ if __name__ == '__main__':
                 pos = trial_data[0].index(case)
                 print()
                 print(case, "\tPredicted Value",
-                        y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+                      y_pred[pos], "\tTrue Value:", trial_data[2][pos])
             else:
                 print(case, "not in", trial_file)
 
@@ -338,7 +385,7 @@ if __name__ == '__main__':
             else:
                 print(case, "not in", trial_file)
 
-    print("\nStage 2 Checkpoint:\n")
+    print("\n\nStage 2 Checkpoint:\n")
 
     # Stage 2.1: Grab the user_ids for both datasets.
     users = getUserBackground([training_file, trial_file])
@@ -358,35 +405,36 @@ if __name__ == '__main__':
 
     # Stage 2.4: Use the first three factors from PCA as user factors in order to run
     #            user-factor adaptation, otherwise using the same approach as stage 1.
+    train_x_2 = test(train_x, test_x, training_data, trial_data, users, training_file, v_matrix)
+    test_x_2 = test(train_x, test_x, training_data, trial_data, users, trial_file, v_matrix)
 
-    # train x, test x, exact order of each user in test and train (mapping user ids
-    #  to factors in the v_matrix), map ids to user_embedding = training_data[0]
-    # do for train and test
-    #   for each row, get review embedding, get user factor for that row's user id,
-    #   multiply them (dot product) and append them in 1 array to have a (1, 384)
-    #   vector and store it to train the ridge model and then predict.
+    rating_model = buildRatingPredictor(train_x_2, test_x_2, train_y, test_y)
+    y_pred = rating_model.predict(test_x_2)
 
+    print("Mean Absolute Error (test):", MAE(test_y, y_pred))
+    print("Pearson product-moment correlation coefficients (test):",
+          ss.pearsonr(test_y, y_pred))
 
-    # if "food" in trial_file:
-    #     testCases = [548, 4258, 4766, 5800]
+    if "food" in trial_file:
+        testCases = [548, 4258, 4766, 5800]
 
-    #     for case in testCases:
-    #         if case in trial_data[0]:
-    #             pos = trial_data[0].index(case)
-    #             print()
-    #             print(case, "\tPredicted Value",
-    #                   y_pred[pos], "\tTrue Value:", trial_data[2][pos])
-    #         else:
-    #             print(case, "not in", trial_file)
+        for case in testCases:
+            if case in trial_data[0]:
+                pos = trial_data[0].index(case)
+                print()
+                print(case, "\tPredicted Value",
+                      y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+            else:
+                print(case, "not in", trial_file)
 
-    # if "music" in trial_file:
-    #     testCases = [329, 11419, 14023, 14912]
+    if "music" in trial_file:
+        testCases = [329, 11419, 14023, 14912]
 
-    #     for case in testCases:
-    #         if case in trial_data[0]:
-    #             pos = trial_data[0].index(case)
-    #             print()
-    #             print(case, "\tPredicted Value",
-    #                   y_pred[pos], "\tTrue Value:", trial_data[2][pos])
-    #         else:
-    #             print(case, "not in", trial_file)
+        for case in testCases:
+            if case in trial_data[0]:
+                pos = trial_data[0].index(case)
+                print()
+                print(case, "\tPredicted Value",
+                      y_pred[pos], "\tTrue Value:", trial_data[2][pos])
+            else:
+                print(case, "not in", trial_file)
