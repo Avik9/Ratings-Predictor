@@ -5,11 +5,14 @@ from sklearn.decomposition import PCA
 import scipy.stats as ss
 from gensim.models import Word2Vec
 import torch
+import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader
 import sys
 import pandas as pd
+import nltk
+nltk.download('punkt')
 from nltk.tokenize import word_tokenize
 import multiprocessing
-import time
 
 ##########################################################################################
 # Stage 1
@@ -55,7 +58,7 @@ def readCSV(fileName):
     return [item_ids, reviews, ratings, user_ids]
 
 
-def trainWord2VecModel(reviews, min_count=1):
+def trainWord2VecModel(reviews, cores=2, min_count=1):
     """
     Trains a Word2Vec model from the given reviews.
 
@@ -75,8 +78,6 @@ def trainWord2VecModel(reviews, min_count=1):
               word2vec model utilizing only the training data.
     """
 
-    cores = multiprocessing.cpu_count()
-
     w2v_model = Word2Vec(sentences=reviews,
                          workers=cores-1,
                          window=10,
@@ -91,6 +92,8 @@ def trainWord2VecModel(reviews, min_count=1):
     w2v_model.train(sentences=reviews,
                     total_examples=w2v_model.corpus_count,
                     epochs=30)
+
+    w2v_model.init_sims()
 
     return w2v_model
 
@@ -163,14 +166,14 @@ def buildRatingPredictor(train_x, test_x, train_y, test_y):
               (can use the SKLearn Ridge class) with word2vec features.
     """
 
-    listC = [0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000]
+    listAlpha = [0.0001, 0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000]
     minAccuracy = 1
     bestModel = None
     best_pearsonr = 0.35
 
-    for C in listC:
+    for alpha in listAlpha:
 
-        model = Ridge(random_state=42, alpha=C).fit(train_x, train_y)
+        model = Ridge(random_state=42, alpha=alpha).fit(train_x, train_y)
         y_pred = model.predict(test_x)
 
         acc = MAE(test_y, y_pred)
@@ -264,8 +267,8 @@ def runPCAMatrix(user_reviews):
 
     return v_matrix
 
-        # Part 1  Part 1  ReadCSV               ReadCSV              2.1        CLI   2.3
-def test(X_train, X_test, review_training_data, review_testing_data, user_data, file, v_matrix):
+                       # Part 1  Part 1  ReadCSV               ReadCSV              2.1        CLI   2.3
+def PCA_feature_vector(X_train, X_test, review_training_data, review_testing_data, user_data, file, v_matrix):
 
     feature_vector = []
 
@@ -306,6 +309,96 @@ def test(X_train, X_test, review_training_data, review_testing_data, user_data, 
     feature_vector = np.array(feature_vector)
     return feature_vector
 
+def build_dataloader(embeddings, ratings, bs, shfle, nworkers):
+
+    dataset = TensorDataset(torch.Tensor(embeddings), torch.Tensor(ratings))
+
+    return DataLoader(dataset, batch_size=bs, shuffle=shfle, num_workers=nworkers)
+
+
+class my_lstm_regressor(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(my_lstm_regressor, self).__init__()
+    
+        self.hs = hidden_size # internal hidden size
+        self.inp = input_size # input feature space
+
+        # define our LSTM model and linear decoder
+        self.lstm_cell = nn.LSTMCell(self.inp, self.hs)
+        self.decoder = nn.Linear(self.hs, 1)
+
+        # tracks if hidden states should be moved to GPU on init
+        # self.run_cuda = torch.cuda.is_available()
+
+    def forward(self, inputs, hidden):
+        seq_len = inputs.shape[0] # (len, batch, features)
+        hidden_state, cell_state = hidden
+        
+        # loop through our LSTM cell and gather our states
+        hidden_states = []
+        for i in range(seq_len):
+            hidden_state, cell_state = self.lstm_cell(inputs[i], (hidden_state, cell_state))
+            hidden_states.append(hidden_state)
+        
+        return self.decoder(hidden_states[-1])
+
+    def init_hidden(self, batch_size):
+        weight = next(self.parameters())
+        # init hidden state and cell state to tensor of 0s, both of size self.hidden_size
+        hidden, cell = (weight.new_zeros(batch_size, self.hs), weight.new_zeros(batch_size, self.hs))
+
+        # confirm they are on GPU
+        # if self.run_cuda:
+        #     hidden.cuda()
+        #     cell.cuda()
+
+        return hidden, cell
+
+def train(train_data, epochs=5):
+    model.train()
+
+    for i in range(epochs):
+        epoch_loss = []
+        for data, labels in train_data:
+            optimizer.zero_grad()
+            hidden = model.init_hidden(data.shape[0])
+            
+            # LSTMCell expects batch at dim=1
+            data = data.transpose(0,1)#.cuda()
+            
+            preds = model(data, hidden)
+            
+            # flatten labels to match with predictions
+            #loss = loss_func(preds, labels.view(-1).cuda())
+            
+            # don't need to flatten for MSE
+            loss = loss_func(preds, labels)#.cuda())
+
+            loss.backward()
+
+            optimizer.step()
+
+            epoch_loss.append(loss.item())
+        
+        print(f'Loss for epoch #{i}: {np.mean(epoch_loss)}')
+
+
+def test(test_data):
+    model.eval()
+    with torch.no_grad():
+        test_loss = []
+        for data, labels in test_data:
+            hidden = model.init_hidden(data.shape[0])
+            data = data.transpose(0,1)#.cuda()
+
+            preds = model(data, hidden)
+            #loss = loss_func(preds, labels.view(-1).cuda())
+            loss = loss_func(preds, labels)#.cuda())
+            test_loss.append(loss.item())
+
+        print(f'Loss for test: {np.mean(test_loss)}')
+
+
 ##################################################################
 ##################################################################
 # Main:
@@ -313,7 +406,7 @@ def test(X_train, X_test, review_training_data, review_testing_data, user_data, 
 
 if __name__ == '__main__':
 
-    # Stage 1
+    ## Stage I: Basic Sentiment Analysis with Word2Vec
 
     if(len(sys.argv) < 3 or len(sys.argv) > 3):
         # print("Please enter the right amount of arguments in the following manner:",
@@ -333,17 +426,20 @@ if __name__ == '__main__':
 
     # Stage 1.3: Use GenSim word2vec to train a 128-dimensional word2vec
     #            model utilizing only the training data
+
+    cores = multiprocessing.cpu_count()
+
     if "food_" in trial_file:
-        train_w2v_model = trainWord2VecModel(training_data[1], 5)
-        test_w2v_model = trainWord2VecModel(trial_data[1], 5)
+        train_w2v_model = trainWord2VecModel(training_data[1], cores, 5)
+        test_w2v_model = trainWord2VecModel(trial_data[1], cores, 5)
 
     if "music_" in trial_file:
-        train_w2v_model = trainWord2VecModel(training_data[1], 10)
-        test_w2v_model = trainWord2VecModel(trial_data[1], 10)
+        train_w2v_model = trainWord2VecModel(training_data[1], cores, 10)
+        test_w2v_model = trainWord2VecModel(trial_data[1], cores, 10)
 
     if "musicAndPetsup_" in trial_file:
-        train_w2v_model = trainWord2VecModel(training_data[1], 20)
-        test_w2v_model = trainWord2VecModel(trial_data[1], 20)
+        train_w2v_model = trainWord2VecModel(training_data[1], cores, 20)
+        test_w2v_model = trainWord2VecModel(trial_data[1], cores, 20)
 
     # Stage 1.4: Extract features
     train_x = getFeatures(train_w2v_model, training_data[1])
@@ -357,10 +453,11 @@ if __name__ == '__main__':
 
     # Stage 1.6: Print both the mean absolute error and Pearson correlation
     #            between the predictions and the (test input) set
-
     print("Mean Absolute Error (test):", MAE(test_y, y_pred))
     print("Pearson product-moment correlation coefficients (test):",
           ss.pearsonr(test_y, y_pred))
+
+    # Stage I: Checkpoint
 
     if "food_" in trial_file:
         testCases = [548, 4258, 4766, 5800]
@@ -385,6 +482,10 @@ if __name__ == '__main__':
             else:
                 print(case, "not in", trial_file)
 
+
+
+    ## Stage II: User-Factor Adaptation
+    
     print("\n\nStage 2 Checkpoint:\n")
 
     # Stage 2.1: Grab the user_ids for both datasets.
@@ -405,8 +506,8 @@ if __name__ == '__main__':
 
     # Stage 2.4: Use the first three factors from PCA as user factors in order to run
     #            user-factor adaptation, otherwise using the same approach as stage 1.
-    train_x_2 = test(train_x, test_x, training_data, trial_data, users, training_file, v_matrix)
-    test_x_2 = test(train_x, test_x, training_data, trial_data, users, trial_file, v_matrix)
+    train_x_2 = PCA_feature_vector(train_x, test_x, training_data, trial_data, users, training_file, v_matrix)
+    test_x_2 = PCA_feature_vector(train_x, test_x, training_data, trial_data, users, trial_file, v_matrix)
 
     rating_model = buildRatingPredictor(train_x_2, test_x_2, train_y, test_y)
     y_pred = rating_model.predict(test_x_2)
@@ -414,6 +515,8 @@ if __name__ == '__main__':
     print("Mean Absolute Error (test):", MAE(test_y, y_pred))
     print("Pearson product-moment correlation coefficients (test):",
           ss.pearsonr(test_y, y_pred))
+
+    # Stage II: Checkpoint
 
     if "food" in trial_file:
         testCases = [548, 4258, 4766, 5800]
@@ -438,3 +541,31 @@ if __name__ == '__main__':
                       y_pred[pos], "\tTrue Value:", trial_data[2][pos])
             else:
                 print(case, "not in", trial_file)
+
+
+
+    ## Stage III: Deep Learning
+    
+    print("\n\nStage 3 Checkpoint:\n")
+
+    # Stage 3.1: Start with word2vec embeddings *per word* -- these may already be in memory from stage 1.
+
+    training_data = build_dataloader(train_x, train_y, 128, False, cores)
+    testing_data = build_dataloader(test_x, test_y, 128, False, cores)
+
+    # Stage 3.2:
+
+    # instantiate model, optimizer, and loss function
+    model = my_lstm_regressor(300, 128)
+    print(model)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    
+    #loss_func = nn.CrossEntropyLoss()
+    loss_func = nn.MSELoss()
+
+    # move model to GPU if possible
+    # if torch.cuda.is_available():
+    #     model.cuda()
+
+    train(training_data)
+    test(testing_data)
