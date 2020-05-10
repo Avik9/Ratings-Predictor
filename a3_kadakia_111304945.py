@@ -43,10 +43,7 @@ def readCSV(fileName):
     ratings = []
     reviews = []
     user_ids = []
-
-    dataFile["reviewText"] = dataFile["reviewText"].replace("", np.nan)
-    dataFile = dataFile.dropna(subset=["reviewText"])
-
+    
     for _, line in dataFile.iterrows():
 
         item_ids.append(int(line[0]))
@@ -87,8 +84,6 @@ def trainWord2VecModel(reviews, cores=2, min_count=1):
                          seed=42,
                          size=128)
 
-    # w2v_model.build_vocab(sentences=reviews)
-
     w2v_model.train(sentences=reviews,
                     total_examples=w2v_model.corpus_count,
                     epochs=30)
@@ -126,17 +121,17 @@ def getFeatures(w2v_model, reviews):
     for review in reviews:
         temp = [0] * 128
 
-        counter = 1
-
         for word in review:
             if word in w2v_model.wv.index2word:
                 temp += w2v_model.wv[word]
-                counter += 1
 
         temp = np.asarray(temp)
-        train_x.append(temp/len(review))
-        # train_x.append(temp/counter)
 
+        if(len(review) > 0):
+            train_x.append(temp/len(review))
+        else:
+            train_x.append(temp)
+            
     return np.asarray(train_x)
 
 
@@ -218,9 +213,6 @@ def getUserBackground(files):
     for file in files:
         dataFile = pd.read_csv(file, sep=',')
 
-        dataFile["reviewText"] = dataFile["reviewText"].replace("", np.nan)
-        dataFile = dataFile.dropna(subset=["reviewText"])
-
         for _, line in dataFile.iterrows():
 
             user = line[4]
@@ -242,6 +234,11 @@ def getUserBackground(files):
                 reviews.append([word_tokenize(line[5].lower())
                                 if type(line[5]) == str else ""])  # Reviews
 
+    print("user_ids:", len(user_ids))
+    print("item_ids:", len(item_ids))
+    print("ratings:", len(ratings))
+    print("reviews:", len(reviews))
+
     return [user_ids, item_ids, ratings, reviews]
 
 
@@ -262,10 +259,10 @@ def getUserLangRepresentation(model, users):
 
 def runPCAMatrix(user_reviews):
 
-    user_PCA = PCA(n_components=3).fit(user_reviews)
-    v_matrix = user_PCA.transform(user_reviews)
+    # user_PCA = PCA(n_components=3).fit(user_reviews).transform(user_reviews)
+    # v_matrix = user_PCA.transform(user_reviews)
 
-    return v_matrix
+    return (PCA(n_components=3).fit(user_reviews)).transform(user_reviews)
 
                        # Part 1  Part 1  ReadCSV               ReadCSV              2.1        CLI   2.3
 def PCA_feature_vector(X_train, X_test, review_training_data, review_testing_data, user_data, file, v_matrix):
@@ -273,9 +270,6 @@ def PCA_feature_vector(X_train, X_test, review_training_data, review_testing_dat
     feature_vector = []
 
     dataFile = pd.read_csv(file, sep=',')
-
-    dataFile["reviewText"] = dataFile["reviewText"].replace("", np.nan)
-    dataFile = dataFile.dropna(subset=["reviewText"])
 
     for _, line in dataFile.iterrows():
 
@@ -312,6 +306,9 @@ def PCA_feature_vector(X_train, X_test, review_training_data, review_testing_dat
 def build_dataloader(embeddings, ratings, bs, shfle, nworkers):
 
     dataset = TensorDataset(torch.Tensor(embeddings), torch.Tensor(ratings))
+    print("Embeddings:", torch.Tensor(embeddings).dim())
+    print("Ratings", torch.Tensor(ratings).ndim)
+    
 
     return DataLoader(dataset, batch_size=bs, shuffle=shfle, num_workers=nworkers)
 
@@ -328,19 +325,26 @@ class my_lstm_regressor(nn.Module):
         self.decoder = nn.Linear(self.hs, 1)
 
         # tracks if hidden states should be moved to GPU on init
-        # self.run_cuda = torch.cuda.is_available()
+        self.run_cuda = torch.cuda.is_available()
 
-    def forward(self, inputs, hidden):
-        seq_len = inputs.shape[0] # (len, batch, features)
-        hidden_state, cell_state = hidden
+        self.fc = nn.Linear(hidden_size, output_dim)
+
+    def forward(self, text):
+    
+        #text = [sent len, batch size]
         
-        # loop through our LSTM cell and gather our states
-        hidden_states = []
-        for i in range(seq_len):
-            hidden_state, cell_state = self.lstm_cell(inputs[i], (hidden_state, cell_state))
-            hidden_states.append(hidden_state)
+        embedded = self.embedding(text)
         
-        return self.decoder(hidden_states[-1])
+        #embedded = [sent len, batch size, emb dim]
+        
+        output, hidden = self.rnn(embedded)
+        
+        #output = [sent len, batch size, hid dim]
+        #hidden = [1, batch size, hid dim]
+        
+        assert torch.equal(output[-1,:,:], hidden.squeeze(0))
+        
+        return self.fc(hidden.squeeze(0))
 
     def init_hidden(self, batch_size):
         weight = next(self.parameters())
@@ -348,9 +352,9 @@ class my_lstm_regressor(nn.Module):
         hidden, cell = (weight.new_zeros(batch_size, self.hs), weight.new_zeros(batch_size, self.hs))
 
         # confirm they are on GPU
-        # if self.run_cuda:
-        #     hidden.cuda()
-        #     cell.cuda()
+        if self.run_cuda:
+            hidden.cuda()
+            cell.cuda()
 
         return hidden, cell
 
@@ -369,10 +373,10 @@ def train(train_data, epochs=5):
             preds = model(data, hidden)
             
             # flatten labels to match with predictions
-            #loss = loss_func(preds, labels.view(-1).cuda())
+            loss = loss_func(preds, labels.view(-1).cuda())
             
             # don't need to flatten for MSE
-            loss = loss_func(preds, labels)#.cuda())
+            loss = loss_func(preds, labels.cuda())
 
             loss.backward()
 
@@ -389,11 +393,11 @@ def test(test_data):
         test_loss = []
         for data, labels in test_data:
             hidden = model.init_hidden(data.shape[0])
-            data = data.transpose(0,1)#.cuda()
+            data = data.transpose(0,1).cuda()
 
             preds = model(data, hidden)
             #loss = loss_func(preds, labels.view(-1).cuda())
-            loss = loss_func(preds, labels)#.cuda())
+            loss = loss_func(preds, labels.cuda())
             test_loss.append(loss.item())
 
         print(f'Loss for test: {np.mean(test_loss)}')
@@ -553,10 +557,12 @@ if __name__ == '__main__':
     training_data = build_dataloader(train_x, train_y, 128, False, cores)
     testing_data = build_dataloader(test_x, test_y, 128, False, cores)
 
+    print(training_data)
+
     # Stage 3.2:
 
     # instantiate model, optimizer, and loss function
-    model = my_lstm_regressor(300, 128)
+    model = my_lstm_regressor(128, 128)
     print(model)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     
@@ -564,8 +570,8 @@ if __name__ == '__main__':
     loss_func = nn.MSELoss()
 
     # move model to GPU if possible
-    # if torch.cuda.is_available():
-    #     model.cuda()
+    if torch.cuda.is_available():
+        model.cuda()
 
     train(training_data)
     test(testing_data)
